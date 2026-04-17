@@ -194,8 +194,61 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    Index index;
+
+    if (index_load(&index) != 0)
+        return -1;
+
+    ObjectID tree_id;
+    if (tree_from_index(&tree_id) != 0)
+        return -1;
+
+    char tree_hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(&tree_id, tree_hex);
+
+    char parent_hex[HASH_HEX_SIZE + 1] = "";
+    ObjectID parent_id;
+    int has_parent = (head_read(&parent_id) == 0);
+
+    if (has_parent)
+        hash_to_hex(&parent_id, parent_hex);
+
+    const char *author = pes_author();
+    long timestamp = time(NULL);
+
+    char commit_data[4096];
+
+    if (has_parent) {
+        snprintf(commit_data, sizeof(commit_data),
+                 "tree %s\n"
+                 "parent %s\n"
+                 "author %s %ld\n"
+                 "committer %s %ld\n"
+                 "\n"
+                 "%s\n",
+                 tree_hex,
+                 parent_hex,
+                 author, timestamp,
+                 author, timestamp,
+                 message);
+    } else {
+        snprintf(commit_data, sizeof(commit_data),
+                 "tree %s\n"
+                 "author %s %ld\n"
+                 "committer %s %ld\n"
+                 "\n"
+                 "%s\n",
+                 tree_hex,
+                 author, timestamp,
+                 author, timestamp,
+                 message);
+    }
+
+    if (object_write(OBJ_COMMIT, commit_data, strlen(commit_data), commit_id_out) != 0)
+        return -1;
+
+    if (head_update(commit_id_out) != 0)
+        return -1;
+
+    return 0;
 }
