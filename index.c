@@ -135,12 +135,123 @@ int index_status(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    index->count = 0;
+
+    FILE *fp = fopen(INDEX_FILE, "r");
+    if (!fp)
+        return 0;
+
+    char line[1024];
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (index->count >= MAX_INDEX_ENTRIES)
+            break;
+
+        IndexEntry *entry = &index->entries[index->count];
+
+        char hash_hex[HASH_HEX_SIZE + 1];
+
+        if (sscanf(line, "%o %64s %lu %u %511[^\n]",
+                   &entry->mode,
+                   hash_hex,
+                   &entry->mtime_sec,
+                   &entry->size,
+                   entry->path) != 5) {
+            continue;
+        }
+
+        if (hex_to_hash(hash_hex, &entry->hash) != 0)
+            continue;
+
+        index->count++;
+    }
+
+    fclose(fp);
+    return 0;
+}
+int index_save(const Index *index) {
+    FILE *fp = fopen(INDEX_FILE ".tmp", "w");
+    if (!fp)
+        return -1;
+
+    for (int i = 0; i < index->count; i++) {
+        const IndexEntry *entry = &index->entries[i];
+
+        char hash_hex[HASH_HEX_SIZE + 1];
+        hash_to_hex(&entry->hash, hash_hex);
+
+        fprintf(fp, "%o %s %lu %u %s\n",
+                entry->mode,
+                hash_hex,
+                entry->mtime_sec,
+                entry->size,
+                entry->path);
+    }
+
+    fflush(fp);
+    fsync(fileno(fp));
+    fclose(fp);
+
+    if (rename(INDEX_FILE ".tmp", INDEX_FILE) != 0)
+        return -1;
+
+    return 0;
 }
 
+int index_add(Index *index, const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp)
+        return -1;
+
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    rewind(fp);
+
+    void *data = malloc(file_size);
+    if (!data) {
+        fclose(fp);
+        return -1;
+    }
+
+    if (fread(data, 1, file_size, fp) != (size_t)file_size) {
+        free(data);
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+
+    ObjectID blob_hash;
+    if (object_write(OBJ_BLOB, data, file_size, &blob_hash) != 0) {
+        free(data);
+        return -1;
+    }
+
+    free(data);
+
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return -1;
+
+    IndexEntry *entry = index_find(index, path);
+
+    if (!entry) {
+        if (index->count >= MAX_INDEX_ENTRIES)
+            return -1;
+
+        entry = &index->entries[index->count++];
+    }
+
+    entry->mode = st.st_mode;
+    entry->hash = blob_hash;
+    entry->mtime_sec = st.st_mtime;
+    entry->size = st.st_size;
+
+    strncpy(entry->path, path, sizeof(entry->path) - 1);
+    entry->path[sizeof(entry->path) - 1] = '\0';
+
+    return index_save(index);
+}
 // Save the index to .pes/index atomically.
 //
 // HINTS - Useful functions and syscalls:
@@ -151,12 +262,6 @@ int index_load(Index *index) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
-int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
-}
 
 // Stage a file for the next commit.
 //
@@ -167,9 +272,3 @@ int index_save(const Index *index) {
 //   - index_find                       : checking if the file is already staged
 //
 // Returns 0 on success, -1 on error.
-int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
-}
